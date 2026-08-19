@@ -1,0 +1,18 @@
+# Secrets — never commit real credentials (this file previously held a
+# live service_role key with no .gitignore protecting it — rotate that key
+# if this repo has ever been pushed anywhere)
+.env
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-server/
+
+# Editor/OS
+.DS_Store
+*.log
+npm-debug.log*
