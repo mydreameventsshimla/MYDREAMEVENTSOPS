@@ -399,8 +399,12 @@ async function callApi<T>(path: string, body: Record<string, unknown>): Promise<
   return json as T;
 }
 
-export async function inviteStaffMember(input: { email: string; full_name: string; role: StaffRole }): Promise<void> {
-  await callApi('/api/invite-staff', input);
+// `warning` is set only in one specific case: the auth account was
+// created successfully but the invite email itself failed to send (e.g.
+// Resend rejected it) — the account is real even though nothing landed in
+// their inbox, so this is surfaced rather than silently discarded.
+export async function inviteStaffMember(input: { email: string; full_name: string; role: StaffRole }): Promise<{ warning?: string }> {
+  return callApi('/api/invite-staff', input);
 }
 
 export async function setStaffActive(staffId: string, isActive: boolean): Promise<void> {

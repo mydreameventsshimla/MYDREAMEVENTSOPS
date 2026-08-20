@@ -5,6 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import { createInviteAndSendEmail } from './api/_lib/inviteEmail';
 
 dotenv.config({ path: '.env.local' });
 
@@ -87,16 +88,18 @@ async function startServer() {
       const admin = getAdminClient()!;
       const redirectTo = `${process.env.SITE_URL || `http://localhost:${PORT}`}/set-password`;
 
-      const { data: invited, error: inviteErr } = await admin.auth.admin.inviteUserByEmail(email, {
-        data: { full_name },
-        redirectTo,
-      });
-      if (inviteErr || !invited?.user) {
-        return res.status(400).json({ error: inviteErr?.message || 'Invite failed' });
+      // Uses Resend if RESEND_API_KEY + RESEND_FROM_EMAIL are set,
+      // otherwise falls back to Supabase's own built-in invite email —
+      // see api/_lib/inviteEmail.ts. Shared with the Vercel serverless
+      // version of this route (api/invite-staff.ts) so local dev and the
+      // deployed app send invites the same way.
+      const { user, error: inviteErr } = await createInviteAndSendEmail(admin, email, full_name, redirectTo);
+      if (!user) {
+        return res.status(400).json({ error: inviteErr || 'Invite failed' });
       }
 
       const { error: staffErr } = await admin.from('admin_users').insert({
-        auth_user_id: invited.user.id,
+        auth_user_id: user.id,
         full_name,
         email,
         role: APP_TO_DB_ROLE[role],
@@ -106,7 +109,7 @@ async function startServer() {
         return res.status(400).json({ error: `Invite sent, but admin_users row failed: ${staffErr.message}` });
       }
 
-      return res.json({ ok: true, id: invited.user.id });
+      return res.json({ ok: true, id: user.id, warning: inviteErr || undefined });
     } catch (err: any) {
       console.error('invite-staff error:', err);
       return res.status(500).json({ error: 'Unexpected server error' });

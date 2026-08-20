@@ -30,8 +30,12 @@ export const AdminTeam: React.FC = () => {
     setError(null);
     setNotice(null);
     try {
-      await inviteStaffMember(form);
-      setNotice(`Invite sent to ${form.email}. They'll set a password from the email link, then sign in normally.`);
+      const result = await inviteStaffMember(form);
+      setNotice(
+        result.warning
+          ? `Account created for ${form.email}, but: ${result.warning}`
+          : `Invite sent to ${form.email}. They'll set a password from the email link, then sign in normally.`
+      );
       setForm({ full_name: '', email: '', role: 'manager' });
       setShowForm(false);
       await load();

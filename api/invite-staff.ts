@@ -7,6 +7,7 @@
 // version used for local dev and any non-Vercel deployment target.
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { APP_TO_DB_ROLE, getAdminClient, requireAdmin } from './_lib/adminAuth';
+import { createInviteAndSendEmail } from './_lib/inviteEmail';
 
 // Invite a new manager/salesman/admin: creates the Supabase Auth user in
 // "invited" state (Supabase emails them a set-password link) and creates
@@ -32,16 +33,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const siteUrl = (process.env.SITE_URL || `https://${req.headers.host}`).replace(/\/+$/, '');
     const redirectTo = `${siteUrl}/set-password`;
 
-    const { data: invited, error: inviteErr } = await admin.auth.admin.inviteUserByEmail(email, {
-      data: { full_name },
-      redirectTo,
-    });
-    if (inviteErr || !invited?.user) {
-      return res.status(400).json({ error: inviteErr?.message || 'Invite failed' });
+    // Uses Resend if RESEND_API_KEY + RESEND_FROM_EMAIL are set, otherwise
+    // falls back to Supabase's own built-in invite email — see
+    // _lib/inviteEmail.ts.
+    const { user, error: inviteErr } = await createInviteAndSendEmail(admin, email, full_name, redirectTo);
+    if (!user) {
+      return res.status(400).json({ error: inviteErr || 'Invite failed' });
     }
 
     const { error: staffErr } = await admin.from('admin_users').insert({
-      auth_user_id: invited.user.id,
+      auth_user_id: user.id,
       full_name,
       email,
       role: APP_TO_DB_ROLE[role],
@@ -51,7 +52,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: `Invite sent, but admin_users row failed: ${staffErr.message}` });
     }
 
-    return res.status(200).json({ ok: true, id: invited.user.id });
+    // user exists but inviteErr is set only in the "account created, email
+    // failed to send" case (see inviteEmail.ts) — still 200 since the
+    // account is real, but the client should surface this to the admin.
+    return res.status(200).json({ ok: true, id: user.id, warning: inviteErr || undefined });
   } catch (err: any) {
     console.error('invite-staff error:', err);
     return res.status(500).json({ error: 'Unexpected server error' });
