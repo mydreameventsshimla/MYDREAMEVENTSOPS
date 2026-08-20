@@ -2,7 +2,7 @@
 // /api/deactivate-staff — see invite-staff.ts's header comment for why
 // this exists as a separate file.
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getAdminClient, requireAdmin } from './_lib/adminAuth';
+import { getAdminClient, requireAdmin } from './_lib/adminAuth.js';
 
 // Deactivate a staff member — flips is_active off, which RLS already
 // treats as "logged out of every workspace" (see is_staff()/is_admin()).

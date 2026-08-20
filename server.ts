@@ -5,7 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
-import { createInviteAndSendEmail } from './api/_lib/inviteEmail';
+import { createInviteAndSendEmail } from './api/_lib/inviteEmail.js';
 
 dotenv.config({ path: '.env.local' });
 

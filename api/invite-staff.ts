@@ -6,8 +6,8 @@
 // server.ts's /api/invite-staff if you change one — server.ts stays the
 // version used for local dev and any non-Vercel deployment target.
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { APP_TO_DB_ROLE, getAdminClient, requireAdmin } from './_lib/adminAuth';
-import { createInviteAndSendEmail } from './_lib/inviteEmail';
+import { APP_TO_DB_ROLE, getAdminClient, requireAdmin } from './_lib/adminAuth.js';
+import { createInviteAndSendEmail } from './_lib/inviteEmail.js';
 
 // Invite a new manager/salesman/admin: creates the Supabase Auth user in
 // "invited" state (Supabase emails them a set-password link) and creates
