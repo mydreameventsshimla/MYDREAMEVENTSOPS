@@ -36,7 +36,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Uses Resend if RESEND_API_KEY + RESEND_FROM_EMAIL are set, otherwise
     // falls back to Supabase's own built-in invite email — see
     // _lib/inviteEmail.ts.
-    const { user, error: inviteErr } = await createInviteAndSendEmail(admin, email, full_name, redirectTo);
+    const { user, error: inviteErr } = await createInviteAndSendEmail(admin, email, full_name, role, redirectTo);
     if (!user) {
       return res.status(400).json({ error: inviteErr || 'Invite failed' });
     }

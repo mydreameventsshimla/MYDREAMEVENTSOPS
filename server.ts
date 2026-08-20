@@ -93,7 +93,7 @@ async function startServer() {
       // see api/_lib/inviteEmail.ts. Shared with the Vercel serverless
       // version of this route (api/invite-staff.ts) so local dev and the
       // deployed app send invites the same way.
-      const { user, error: inviteErr } = await createInviteAndSendEmail(admin, email, full_name, redirectTo);
+      const { user, error: inviteErr } = await createInviteAndSendEmail(admin, email, full_name, role, redirectTo);
       if (!user) {
         return res.status(400).json({ error: inviteErr || 'Invite failed' });
       }
