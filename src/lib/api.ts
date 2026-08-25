@@ -19,6 +19,17 @@ import {
   ActivityLogEntry,
   LocationRow,
   GuestRow,
+  ListingCategory,
+  ListingStatus,
+  ListingBadge,
+  VendorListing,
+  ListingBundle,
+  ListingMedia,
+  ListingSpace,
+  ListingRoom,
+  ListingPackage,
+  ListingAvailability,
+  AvailabilityStatus,
 } from '../types';
 
 // ============================================================================
@@ -34,13 +45,14 @@ function mapStaffRow(row: any): StaffProfile {
     email: row.email,
     is_active: row.is_active,
     role: DB_TO_APP_ROLE[row.role as DbStaffRole],
+    whatsapp_number: row.whatsapp_number ?? null,
   };
 }
 
 export async function fetchStaffRoster(role?: StaffRole): Promise<StaffProfile[]> {
   let query = supabase
     .from('admin_users')
-    .select('id, full_name, email, role, is_active')
+    .select('id, full_name, email, role, is_active, whatsapp_number')
     .eq('is_active', true)
     .order('full_name');
   if (role) query = query.eq('role', APP_TO_DB_ROLE[role]);
@@ -370,6 +382,13 @@ export async function submitVendorApplication(salesmanId: string, input: VendorA
   if (error) throw error;
 }
 
+// Withdraw a lead this agent submitted (migration 0017). Listings built from
+// it are unaffected — vendor_listings.application_id is `on delete set null`.
+export async function deleteVendorApplication(applicationId: string): Promise<void> {
+  const { error } = await supabase.from('vendor_applications').delete().eq('id', applicationId);
+  if (error) throw error;
+}
+
 export async function fetchMyVendorApplications(salesmanId: string): Promise<VendorApplication[]> {
   const { data, error } = await supabase
     .from('vendor_applications')
@@ -387,7 +406,7 @@ export async function fetchMyVendorApplications(salesmanId: string): Promise<Ven
 // they're really an admin before doing anything privileged.
 // ============================================================================
 
-async function callApi<T>(path: string, body: Record<string, unknown>): Promise<T> {
+export async function callApi<T>(path: string, body: Record<string, unknown>): Promise<T> {
   const token = await getAccessToken();
   const res = await fetch(path, {
     method: 'POST',
@@ -414,7 +433,7 @@ export async function setStaffActive(staffId: string, isActive: boolean): Promis
 export async function fetchFullStaffRoster(): Promise<StaffProfile[]> {
   const { data, error } = await supabase
     .from('admin_users')
-    .select('id, full_name, email, role, is_active')
+    .select('id, full_name, email, role, is_active, whatsapp_number')
     .order('role')
     .order('full_name');
   if (error) throw error;
@@ -628,4 +647,307 @@ export function subscribeToGuestsStaff(enquiryId: string, onChange: () => void):
   return () => {
     supabase.removeChannel(channel);
   };
+}
+
+// ============================================================================
+// VENDOR LISTINGS (migration 0015)
+//
+// Reads and simple field updates go straight through PostgREST — RLS already
+// scopes them (a sales agent sees every listing but can only write their own,
+// and only while it's a draft or rejected). The three things RLS *can't*
+// express — status transitions, the completeness check, and the publish-time
+// mirror write — go through the SECURITY DEFINER RPCs instead.
+// ============================================================================
+
+export async function createVendorListing(
+  category: ListingCategory,
+  name: string,
+  applicationId?: string | null
+): Promise<string> {
+  const { data, error } = await supabase.rpc('create_vendor_listing', {
+    p_category: category,
+    p_name: name,
+    p_application_id: applicationId ?? null,
+  });
+  if (error) throw error;
+  return data as string;
+}
+
+export async function fetchMyListings(salesmanId: string): Promise<VendorListing[]> {
+  const { data, error } = await supabase
+    .from('vendor_listings')
+    .select('*')
+    .eq('owner_salesman_id', salesmanId)
+    .order('updated_at', { ascending: false });
+  if (error) throw error;
+  return (data as VendorListing[]) || [];
+}
+
+// One round trip for the whole editor. Five parallel queries rather than one
+// nested select: PostgREST's embedded resources can't be ordered per-child
+// independently, and the editor needs each child list in its own `position`
+// order.
+export async function fetchListingBundle(listingId: string): Promise<ListingBundle> {
+  const [listing, media, spaces, rooms, packages] = await Promise.all([
+    supabase.from('vendor_listings').select('*').eq('id', listingId).single(),
+    supabase.from('vendor_listing_media').select('*').eq('listing_id', listingId).order('position'),
+    supabase.from('vendor_listing_spaces').select('*').eq('listing_id', listingId).order('position'),
+    supabase.from('vendor_listing_rooms').select('*').eq('listing_id', listingId).order('position'),
+    supabase.from('vendor_listing_packages').select('*').eq('listing_id', listingId).order('position'),
+  ]);
+  if (listing.error) throw listing.error;
+  if (media.error) throw media.error;
+  if (spaces.error) throw spaces.error;
+  if (rooms.error) throw rooms.error;
+  if (packages.error) throw packages.error;
+
+  return {
+    listing: listing.data as VendorListing,
+    media: (media.data as ListingMedia[]) || [],
+    spaces: (spaces.data as ListingSpace[]) || [],
+    rooms: (rooms.data as ListingRoom[]) || [],
+    packages: (packages.data as ListingPackage[]) || [],
+  };
+}
+
+// Sending the whole row back is fine even though it contains admin-only
+// columns: the guard trigger in 0015 silently preserves badges/rating/
+// sort_weight for non-admins rather than rejecting the write, which is
+// exactly why it preserves rather than raises.
+export async function updateVendorListing(
+  listingId: string,
+  patch: Partial<VendorListing>
+): Promise<VendorListing> {
+  const { data, error } = await supabase
+    .from('vendor_listings')
+    .update(patch)
+    .eq('id', listingId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as VendorListing;
+}
+
+export async function submitVendorListing(listingId: string): Promise<void> {
+  const { error } = await supabase.rpc('submit_vendor_listing', { p_listing_id: listingId });
+  if (error) throw error;
+}
+
+export async function deleteVendorListing(listingId: string): Promise<void> {
+  const { error } = await supabase.from('vendor_listings').delete().eq('id', listingId);
+  if (error) throw error;
+}
+
+// ---------------------------------------------------------------------------
+// AVAILABILITY (migration 0022) — the salesman-owned calendar. Deliberately
+// NOT part of the generic child-row helper below: writes here aren't gated
+// by listing status the way spaces/rooms/packages are (see the migration's
+// header for why), so this can't share that helper's assumptions.
+// ---------------------------------------------------------------------------
+
+export async function fetchListingAvailability(listingId: string): Promise<ListingAvailability[]> {
+  const { data, error } = await supabase
+    .from('vendor_listing_availability')
+    .select('*')
+    .eq('listing_id', listingId)
+    .order('date');
+  if (error) throw error;
+  return (data as ListingAvailability[]) || [];
+}
+
+// One call sets one status across many dates — the "mark this whole year
+// available" button and a parsed CSV both funnel through this, grouped by
+// status client-side, rather than one round trip per date.
+export async function setVendorAvailability(
+  listingId: string,
+  dates: string[],
+  status: AvailabilityStatus,
+  isAuspicious = false
+): Promise<void> {
+  if (dates.length === 0) return;
+  const { error } = await supabase.rpc('set_vendor_availability', {
+    p_listing_id: listingId,
+    p_dates: dates,
+    p_status: status,
+    p_is_auspicious: isAuspicious,
+  });
+  if (error) throw error;
+}
+
+export async function deleteAvailabilityDates(listingId: string, dates: string[]): Promise<void> {
+  if (dates.length === 0) return;
+  const { error } = await supabase
+    .from('vendor_listing_availability')
+    .delete()
+    .eq('listing_id', listingId)
+    .in('date', dates);
+  if (error) throw error;
+}
+
+// ---------------------------------------------------------------------------
+// Child rows (spaces / rooms / packages). Generic over the three tables —
+// they differ only in their columns, and three near-identical copies of this
+// is how one of them ends up not saving `position`.
+// ---------------------------------------------------------------------------
+export type ListingChildTable =
+  | 'vendor_listing_spaces'
+  | 'vendor_listing_rooms'
+  | 'vendor_listing_packages';
+
+export async function addListingChild<T>(
+  table: ListingChildTable,
+  listingId: string,
+  row: Record<string, unknown>,
+  position: number
+): Promise<T> {
+  const { data, error } = await supabase
+    .from(table)
+    .insert({ ...row, listing_id: listingId, position })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as T;
+}
+
+export async function updateListingChild<T>(
+  table: ListingChildTable,
+  id: string,
+  patch: Record<string, unknown>
+): Promise<T> {
+  const { data, error } = await supabase.from(table).update(patch).eq('id', id).select().single();
+  if (error) throw error;
+  return data as T;
+}
+
+export async function deleteListingChild(table: ListingChildTable, id: string): Promise<void> {
+  const { error } = await supabase.from(table).delete().eq('id', id);
+  if (error) throw error;
+}
+
+// ---------------------------------------------------------------------------
+// LISTING REVIEW (admin)
+//
+// Approve/reject and badge assignment both go through SECURITY DEFINER RPCs,
+// not table writes: approving also has to generate the slug and write the
+// mirror row into venues/vendors, and badges are blocked for everyone by the
+// guard trigger regardless of role — the RPC is the only door.
+// ---------------------------------------------------------------------------
+
+export async function fetchListingsByStatus(status?: ListingStatus): Promise<VendorListing[]> {
+  let q = supabase.from('vendor_listings').select('*');
+  if (status) q = q.eq('status', status);
+  const { data, error } = await q
+    .order('submitted_at', { ascending: false, nullsFirst: false })
+    .order('updated_at', { ascending: false });
+  if (error) throw error;
+  return (data as VendorListing[]) || [];
+}
+
+export async function reviewVendorListing(
+  listingId: string,
+  approve: boolean,
+  reason?: string
+): Promise<void> {
+  const { error } = await supabase.rpc('review_vendor_listing', {
+    p_listing_id: listingId,
+    p_approve: approve,
+    p_reason: reason ?? null,
+  });
+  if (error) throw error;
+}
+
+export interface MerchandisingInput {
+  badges?: ListingBadge[];
+  is_partner?: boolean;
+  offer_text?: string | null;
+  sort_weight?: number;
+}
+
+export async function setListingMerchandising(
+  listingId: string,
+  input: MerchandisingInput
+): Promise<void> {
+  const { error } = await supabase.rpc('set_vendor_listing_merchandising', {
+    p_listing_id: listingId,
+    p_badges: input.badges ?? null,
+    p_is_partner: input.is_partner ?? null,
+    p_offer_text: input.offer_text ?? null,
+    p_sort_weight: input.sort_weight ?? null,
+  });
+  if (error) throw error;
+}
+
+// The review queue should light up the moment an agent submits — 0015 adds
+// vendor_listings to the supabase_realtime publication for exactly this.
+export function subscribeToListings(onChange: () => void): () => void {
+  const channel = supabase
+    .channel('ops:vendor_listings')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'vendor_listings' }, onChange)
+    .subscribe();
+  return () => { supabase.removeChannel(channel); };
+}
+
+// Take a live listing off the public site and hand it back to its agent with
+// a reason. Deactivates the venues/vendors mirror row in the same
+// transaction — see 0018 for why that ordering isn't optional.
+export async function unpublishVendorListing(listingId: string, reason: string): Promise<void> {
+  const { error } = await supabase.rpc('unpublish_vendor_listing', {
+    p_listing_id: listingId,
+    p_reason: reason,
+  });
+  if (error) throw error;
+}
+
+// Admin delete for any listing, at any status. Removes the mirror row too;
+// without that the venue stays live on the client site with its listing gone.
+export async function adminDeleteVendorListing(listingId: string): Promise<void> {
+  const { error } = await supabase.rpc('admin_delete_vendor_listing', { p_listing_id: listingId });
+  if (error) throw error;
+}
+
+// Cover images for a set of listings, for the review queue's cards. Only
+// `role = 'cover'` is fetched rather than all media: a queue of 20 venues
+// with 30 photos each would otherwise pull 600 rows to show 20 thumbnails.
+// Every route that creates media assigns a cover (the editor promotes the
+// first upload, bulk import promotes the first file, deleting a cover
+// promotes a replacement), so a listing without one is rare and falls back
+// to a placeholder rather than a second query.
+export async function fetchCoversForListings(
+  listingIds: string[]
+): Promise<Map<string, ListingMedia>> {
+  if (listingIds.length === 0) return new Map();
+  const { data, error } = await supabase
+    .from('vendor_listing_media')
+    .select('*')
+    .in('listing_id', listingIds)
+    .eq('role', 'cover')
+    .order('position');
+  if (error) throw error;
+
+  // First row per listing wins. Ordering by position matters because a bug in
+  // an earlier version of the uploader marked every photo of the first batch
+  // as the cover; without an explicit order those listings would show a
+  // different thumbnail depending on which row the database returned first.
+  const covers = new Map<string, ListingMedia>();
+  for (const m of (data as ListingMedia[]) || []) {
+    if (!covers.has(m.listing_id)) covers.set(m.listing_id, m);
+  }
+  return covers;
+}
+
+// How many photos each listing has — shown on the queue card, because "this
+// venue has one photo" is a reason to send it back and it shouldn't take
+// opening the listing to find that out.
+export async function fetchMediaCounts(listingIds: string[]): Promise<Map<string, number>> {
+  if (listingIds.length === 0) return new Map();
+  const { data, error } = await supabase
+    .from('vendor_listing_media')
+    .select('listing_id')
+    .in('listing_id', listingIds);
+  if (error) throw error;
+  const counts = new Map<string, number>();
+  for (const row of (data as { listing_id: string }[]) || []) {
+    counts.set(row.listing_id, (counts.get(row.listing_id) ?? 0) + 1);
+  }
+  return counts;
 }

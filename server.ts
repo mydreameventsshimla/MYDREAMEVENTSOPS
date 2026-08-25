@@ -6,6 +6,7 @@ import dotenv from 'dotenv';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { createInviteAndSendEmail } from './api/_lib/inviteEmail.js';
+import { handleSignRequest, handleDestroyRequest } from './api/_lib/cloudinary.js';
 
 dotenv.config({ path: '.env.local' });
 
@@ -132,6 +133,47 @@ async function startServer() {
       return res.json({ ok: true });
     } catch (err: any) {
       console.error('deactivate-staff error:', err);
+      return res.status(500).json({ error: 'Unexpected server error' });
+    }
+  });
+
+  // --------------------------------------------------------------------
+  // Cloudinary signed uploads. Unlike the two routes above these are NOT
+  // admin-only — uploading listing photos is a sales agent's core job — so
+  // the role check lives inside the handler, which also pins every upload
+  // to a listing the caller actually owns. See api/_lib/cloudinary.ts for
+  // why signed uploads rather than an unsigned preset.
+  //
+  // The limiter is looser than privilegedLimiter because one gallery upload
+  // is legitimately one request for up to 30 slots, and an agent working
+  // through a venue's photos will hit this repeatedly in a short burst.
+  // --------------------------------------------------------------------
+  const uploadLimiter = rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: true, legacyHeaders: false });
+
+  function bearerToken(req: express.Request): string {
+    return (req.headers.authorization || '').replace('Bearer ', '');
+  }
+
+  app.post('/api/cloudinary-sign', uploadLimiter, async (req, res) => {
+    try {
+      const admin = getAdminClient();
+      if (!admin) return res.status(500).json({ error: 'Server is not configured' });
+      const { status, body } = await handleSignRequest(admin, bearerToken(req), req.body || {});
+      return res.status(status).json(body);
+    } catch (err: any) {
+      console.error('cloudinary-sign error:', err);
+      return res.status(500).json({ error: 'Unexpected server error' });
+    }
+  });
+
+  app.post('/api/cloudinary-destroy', uploadLimiter, async (req, res) => {
+    try {
+      const admin = getAdminClient();
+      if (!admin) return res.status(500).json({ error: 'Server is not configured' });
+      const { status, body } = await handleDestroyRequest(admin, bearerToken(req), req.body || {});
+      return res.status(status).json(body);
+    } catch (err: any) {
+      console.error('cloudinary-destroy error:', err);
       return res.status(500).json({ error: 'Unexpected server error' });
     }
   });

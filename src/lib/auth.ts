@@ -59,7 +59,7 @@ export async function fetchMyStaffProfile(): Promise<StaffProfile | null> {
 
   const { data, error } = await supabase
     .from('admin_users')
-    .select('id, full_name, email, role, is_active')
+    .select('id, full_name, email, role, is_active, whatsapp_number')
     .eq('auth_user_id', uid)
     .eq('is_active', true)
     .maybeSingle();
@@ -76,5 +76,23 @@ export async function fetchMyStaffProfile(): Promise<StaffProfile | null> {
     email: data.email,
     is_active: data.is_active,
     role: DB_TO_APP_ROLE[data.role as DbStaffRole],
+    whatsapp_number: data.whatsapp_number ?? null,
   };
+}
+
+// Self-service only — see migration 0020. A column-level guard trigger
+// silently drops anything here that isn't `full_name`/`whatsapp_number`
+// back to its previous value, even if this function is later changed to
+// send more, so this is defense in depth rather than the only thing
+// standing between a staff member and their own `role` column.
+export async function updateMyProfile(input: { full_name: string; whatsapp_number: string }): Promise<void> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const uid = sessionData.session?.user.id;
+  if (!uid) throw new Error('Not signed in');
+
+  const { error } = await supabase
+    .from('admin_users')
+    .update({ full_name: input.full_name, whatsapp_number: input.whatsapp_number })
+    .eq('auth_user_id', uid);
+  if (error) throw error;
 }

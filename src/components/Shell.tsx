@@ -19,7 +19,7 @@ const NAV_BY_ROLE: Record<StaffRole, NavItem[]> = {
     { path: '/admin', label: 'Overview', icon: 'space_dashboard' },
     { path: '/admin/enquiries', label: 'All Enquiries', icon: 'inbox' },
     { path: '/admin/managers', label: 'Managers', icon: 'badge' },
-    { path: '/admin/vendors', label: 'Vendor Approvals', icon: 'storefront' },
+    { path: '/admin/vendors', label: 'Vendors', icon: 'storefront' },
     { path: '/admin/salesteam', label: 'Sales Team', icon: 'group' },
     { path: '/admin/locations', label: 'Locations', icon: 'add_location_alt' },
     { path: '/admin/team', label: 'Team & Invites', icon: 'person_add' },
@@ -27,6 +27,8 @@ const NAV_BY_ROLE: Record<StaffRole, NavItem[]> = {
   salesman: [
     { path: '/salesman', label: 'My Targets', icon: 'assignment_ind' },
     { path: '/salesman/onboard', label: 'Add Vendor', icon: 'add_business' },
+    { path: '/salesman/listings', label: 'Vendor Listings', icon: 'storefront' },
+    { path: '/salesman/import', label: 'Bulk Import', icon: 'upload_file' },
     { path: '/salesman/pipeline', label: 'My Pipeline', icon: 'trending_up' },
   ],
 };
@@ -113,15 +115,26 @@ export const Main: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 
 // A simple centered overlay modal shared by the staff-performance and
 // enquiry-detail popups. Click the backdrop or the × to close.
-export const Modal: React.FC<{ title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }> = ({
+// `xl` is for the listing review modal specifically: it renders a full
+// vendor profile — a 16:7 cover, a gallery grid, hall and room tables — and
+// at `wide`'s max-w-2xl those collapse into something an admin can't
+// actually judge the listing from.
+export const Modal: React.FC<{
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+  wide?: boolean;
+  xl?: boolean;
+}> = ({
   title,
   onClose,
   children,
   wide,
+  xl,
 }) => (
   <div className="fixed inset-0 z-[100] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
     <div
-      className={`bg-white rounded-2xl shadow-2xl w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} max-h-[85vh] overflow-y-auto`}
+      className={`bg-white rounded-2xl shadow-2xl w-full ${xl ? 'max-w-5xl' : wide ? 'max-w-2xl' : 'max-w-lg'} max-h-[90vh] overflow-y-auto`}
       onClick={(e) => e.stopPropagation()}
     >
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 sticky top-0 bg-white z-10">

@@ -14,14 +14,17 @@ import { ClientHistory } from './pages/manager/ClientHistory';
 import { AdminOverviewPage } from './pages/admin/AdminOverview';
 import { AdminEnquiries } from './pages/admin/AdminEnquiries';
 import { AdminManagers } from './pages/admin/AdminManagers';
-import { AdminVendorApprovals } from './pages/admin/AdminVendorApprovals';
 import { AdminSalesTeam } from './pages/admin/AdminSalesTeam';
 import { AdminLocations } from './pages/admin/AdminLocations';
 import { AdminTeam } from './pages/admin/AdminTeam';
+import { AdminVendors } from './pages/admin/AdminVendors';
 
 import { SalesmanTargets } from './pages/salesman/SalesmanTargets';
 import { SalesmanOnboard } from './pages/salesman/SalesmanOnboard';
 import { SalesmanPipeline } from './pages/salesman/SalesmanPipeline';
+import { SalesmanListings } from './pages/salesman/SalesmanListings';
+import { ListingEditor } from './pages/salesman/ListingEditor';
+import { BulkImport } from './pages/salesman/BulkImport';
 
 const LoadingScreen = () => (
   <div className="min-h-screen flex items-center justify-center bg-slate-50">
@@ -71,7 +74,10 @@ const GatedApp: React.FC = () => {
         <Route path="/admin" element={<RoleGuard allow="admin"><AdminOverviewPage /></RoleGuard>} />
         <Route path="/admin/enquiries" element={<RoleGuard allow="admin"><AdminEnquiries /></RoleGuard>} />
         <Route path="/admin/managers" element={<RoleGuard allow="admin"><AdminManagers /></RoleGuard>} />
-        <Route path="/admin/vendors" element={<RoleGuard allow="admin"><AdminVendorApprovals /></RoleGuard>} />
+        <Route path="/admin/vendors" element={<RoleGuard allow="admin"><AdminVendors /></RoleGuard>} />
+        {/* Old bookmarks for the separate Listing Review screen still land
+            somewhere sensible now that the two are one page. */}
+        <Route path="/admin/listings" element={<Navigate to="/admin/vendors" replace />} />
         <Route path="/admin/salesteam" element={<RoleGuard allow="admin"><AdminSalesTeam /></RoleGuard>} />
         <Route path="/admin/locations" element={<RoleGuard allow="admin"><AdminLocations /></RoleGuard>} />
         <Route path="/admin/team" element={<RoleGuard allow="admin"><AdminTeam /></RoleGuard>} />
@@ -79,6 +85,9 @@ const GatedApp: React.FC = () => {
         <Route path="/salesman" element={<RoleGuard allow="salesman"><SalesmanTargets /></RoleGuard>} />
         <Route path="/salesman/onboard" element={<RoleGuard allow="salesman"><SalesmanOnboard /></RoleGuard>} />
         <Route path="/salesman/pipeline" element={<RoleGuard allow="salesman"><SalesmanPipeline /></RoleGuard>} />
+        <Route path="/salesman/listings" element={<RoleGuard allow="salesman"><SalesmanListings /></RoleGuard>} />
+        <Route path="/salesman/listing/:listingId" element={<RoleGuard allow="salesman"><ListingEditor /></RoleGuard>} />
+        <Route path="/salesman/import" element={<RoleGuard allow="salesman"><BulkImport /></RoleGuard>} />
 
         <Route path="*" element={<Navigate to={`/${staff.role}`} replace />} />
       </Routes>

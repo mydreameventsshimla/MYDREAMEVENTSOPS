@@ -21,7 +21,20 @@ function safeExternalUrl(raw: string | null | undefined): string | null {
   }
 }
 
-export const AdminVendorApprovals: React.FC = () => {
+// Exported in two shapes on purpose: `ApplicationsPanel` is the content, so
+// the combined Vendors screen can render it inside a tab, and the page
+// wrapper stays for the standalone /admin/vendors route.
+export const AdminVendorApprovals: React.FC = () => (
+  <Page>
+    <TopHeader
+      title="Vendor Approvals"
+      subtitle="Vendor applications — self-submitted or brought in by a sales agent — awaiting review"
+    />
+    <Main><ApplicationsPanel /></Main>
+  </Page>
+);
+
+export const ApplicationsPanel: React.FC = () => {
   const { staff } = useStaff();
   const [applications, setApplications] = useState<VendorApplication[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
@@ -46,9 +59,6 @@ export const AdminVendorApprovals: React.FC = () => {
   };
 
   return (
-    <Page>
-      <TopHeader title="Vendor Approvals" subtitle="Vendor applications — self-submitted or brought in by a sales agent — awaiting review" />
-      <Main>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {applications.map((a) => (
             <div key={a.id} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 space-y-4">
@@ -95,9 +105,9 @@ export const AdminVendorApprovals: React.FC = () => {
               </div>
             </div>
           ))}
-          {applications.length === 0 && <p className="text-sm text-slate-400">No vendor applications waiting on review.</p>}
+          {applications.length === 0 && (
+            <p className="text-sm text-slate-400">No vendor applications waiting on review.</p>
+          )}
         </div>
-      </Main>
-    </Page>
   );
 };

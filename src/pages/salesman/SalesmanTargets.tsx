@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Page, Main, TopHeader, StatusBadge } from '../../components/Shell';
 import { useStaff } from '../../context/StaffContext';
 import { fetchMyRecruitmentTargets, subscribeToMyTargets, updateRecruitmentStatus } from '../../lib/api';
@@ -104,17 +105,80 @@ export const SalesmanTargets: React.FC = () => {
           </div>
         </section>
 
-        <section className="relative overflow-hidden bg-[#1e293b] text-white rounded-3xl p-10 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
-          <div className="space-y-3 max-w-xl relative z-10">
+        {/* This was a single button pointing at `#/salesman/onboard` — a hash
+            href under BrowserRouter, so it set the URL fragment and navigated
+            nowhere. Rebuilt as the actual choice an agent has, because "add a
+            vendor" isn't one action: it depends entirely on how much you
+            already have in hand. Each card states its review cost up front so
+            nobody picks the two-gate path by accident. */}
+        <section className="bg-[#1e293b] text-white rounded-3xl p-10 shadow-xl space-y-7">
+          <div className="space-y-2 max-w-xl">
             <span className="text-xs font-bold text-emerald-400 tracking-widest uppercase">Independent Outreach</span>
             <h2 className="text-3xl font-geist font-bold">Expand the Network</h2>
-            <p className="text-white/70 text-sm">Found a high-value vendor yourself? Onboard them directly — they go live once an admin approves.</p>
+            <p className="text-white/70 text-sm">
+              Found vendors yourself? Add them here. Pick whichever matches what you've got right now —
+              nothing goes live until an admin approves it.
+            </p>
           </div>
-          <a href="#/salesman/onboard" className="relative z-10 bg-emerald-500 text-white px-8 py-4 rounded-2xl font-bold hover:scale-105 transition-all shadow-lg flex items-center gap-3">
-            <span className="material-symbols-outlined text-2xl">add_circle</span> Add Independent Vendor
-          </a>
+
+          <div className="grid md:grid-cols-3 gap-4">
+            <OutreachCard
+              to="/salesman/listings"
+              icon="storefront"
+              title="Build a full profile"
+              body="You have the photos, pricing and capacity. Fill it in and submit."
+              meta="One admin review"
+              primary
+            />
+            <OutreachCard
+              to="/salesman/onboard"
+              icon="bolt"
+              title="Capture a quick lead"
+              body="Just a name and a number. Get sign-off first, build the profile later."
+              meta="Approval, then profile"
+            />
+            <OutreachCard
+              to="/salesman/import"
+              icon="upload_file"
+              title="Import a spreadsheet"
+              body="A CSV of vendors, or a ZIP with their photos. Up to 200 at once."
+              meta="One review each"
+            />
+          </div>
         </section>
       </Main>
     </Page>
   );
 };
+
+const OutreachCard: React.FC<{
+  to: string;
+  icon: string;
+  title: string;
+  body: string;
+  meta: string;
+  primary?: boolean;
+}> = ({ to, icon, title, body, meta, primary }) => (
+  <Link
+    to={to}
+    className={`rounded-2xl p-6 flex flex-col gap-2 transition-all group ${
+      primary
+        ? 'bg-emerald-500 hover:bg-emerald-400 text-white shadow-lg'
+        : 'bg-white/5 hover:bg-white/10 border border-white/10 text-white'
+    }`}
+  >
+    <span className="material-symbols-outlined text-2xl">{icon}</span>
+    <span className="font-geist font-bold">{title}</span>
+    <span className={`text-xs leading-relaxed ${primary ? 'text-white/80' : 'text-white/60'}`}>{body}</span>
+    <span
+      className={`text-[10px] font-bold uppercase tracking-widest mt-auto pt-3 inline-flex items-center gap-1 ${
+        primary ? 'text-white/70' : 'text-emerald-400'
+      }`}
+    >
+      {meta}
+      <span className="material-symbols-outlined text-[14px] group-hover:translate-x-0.5 transition-transform">
+        arrow_forward
+      </span>
+    </span>
+  </Link>
+);

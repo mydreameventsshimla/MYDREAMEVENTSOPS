@@ -12,6 +12,10 @@ const ICON_BY_TYPE: Record<string, string> = {
   assignment: 'swap_horiz',
   push: 'send_to_mobile',
   client_reaction: 'favorite',
+  // 0021 — signals a couple sends from the client app directly.
+  shortlist: 'bookmark_added',
+  visit_request: 'event_available',
+  callback_request: 'call',
 };
 
 const COLOR_BY_TYPE: Record<string, string> = {
@@ -21,6 +25,9 @@ const COLOR_BY_TYPE: Record<string, string> = {
   assignment: 'bg-violet-500',
   push: 'bg-blue-500',
   client_reaction: 'bg-rose-500',
+  shortlist: 'bg-amber-500',
+  visit_request: 'bg-cyan-600',
+  callback_request: 'bg-orange-500',
 };
 
 function formatPhone(client: EnquiryWithClient['client']): string {
@@ -42,7 +49,7 @@ export const ClientHistory: React.FC = () => {
   const [enquiry, setEnquiry] = useState<EnquiryWithClient | null>(null);
   const [entries, setEntries] = useState<ActivityLogEntry[]>([]);
   const [note, setNote] = useState('');
-  const [filter, setFilter] = useState<'all' | 'note' | 'push'>('all');
+  const [filter, setFilter] = useState<'all' | 'note' | 'push' | 'client_signal'>('all');
   const [saving, setSaving] = useState(false);
 
   const loadLog = useCallback(async () => {
@@ -74,6 +81,7 @@ export const ClientHistory: React.FC = () => {
     if (filter === 'all') return true;
     if (filter === 'note') return e.type === 'note';
     if (filter === 'push') return e.type === 'push' || e.type === 'client_reaction';
+    if (filter === 'client_signal') return e.type === 'shortlist' || e.type === 'visit_request' || e.type === 'callback_request';
     return true;
   });
 
@@ -96,13 +104,13 @@ export const ClientHistory: React.FC = () => {
         </header>
 
         <div className="flex flex-wrap gap-3">
-          {(['all', 'note', 'push'] as const).map((f) => (
+          {(['all', 'note', 'push', 'client_signal'] as const).map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
               className={`px-4 py-2 rounded-full font-geist text-xs font-semibold capitalize ${filter === f ? 'bg-[#1e293b] text-white' : 'bg-white border border-slate-200 text-slate-500 hover:bg-slate-50'}`}
             >
-              {f === 'all' ? 'All Activity' : f === 'note' ? 'Notes' : 'Vendor Pushes'}
+              {f === 'all' ? 'All Activity' : f === 'note' ? 'Notes' : f === 'push' ? 'Vendor Pushes' : 'Client Activity'}
             </button>
           ))}
         </div>

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Page, Main, TopHeader } from '../../components/Shell';
 import { useStaff } from '../../context/StaffContext';
 import { submitVendorApplication } from '../../lib/api';
@@ -10,6 +11,7 @@ export const SalesmanOnboard: React.FC = () => {
   const { staff } = useStaff();
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const [form, setForm] = useState({
     applicant_name: '',
@@ -29,10 +31,18 @@ export const SalesmanOnboard: React.FC = () => {
     if (!staff) return;
     setSubmitting(true);
     setDone(false);
+    setError(null);
     try {
       await submitVendorApplication(staff.id, form);
       reset();
       setDone(true);
+    } catch (err) {
+      // Without this the submit failed completely silently: the button
+      // just stopped spinning and the agent had no idea whether the lead
+      // was saved. An RLS rejection here reads as "nothing happened",
+      // which is the worst possible outcome for someone standing in a
+      // hotel lobby with the owner waiting.
+      setError(errorMessage(err));
     } finally {
       setSubmitting(false);
     }
@@ -40,9 +50,41 @@ export const SalesmanOnboard: React.FC = () => {
 
   return (
     <Page>
-      <TopHeader title="Add Vendor" subtitle="Submitted leads stay pending until an admin approves them" />
+      <TopHeader title="Add Vendor" subtitle="Quick capture — for when you don't have the full details yet" />
       <Main>
+        {/* Two entry points exist and people kept assuming a vendor has to
+            pass through both. It doesn't: this form is the fast path for a
+            lead you can't fully document yet, and the full profile can be
+            started directly with no application at all. Saying so here is
+            cheaper than everyone learning it by asking. */}
+        <div className="max-w-2xl bg-sky-50 border border-sky-200 rounded-2xl p-5 mb-6 flex items-start gap-3">
+          <span className="material-symbols-outlined text-sky-500 text-[20px] mt-px">info</span>
+          <div className="text-sm text-sky-900 space-y-2">
+            <p>
+              <strong className="font-semibold">Use this when you're short on time</strong> — a name and a phone
+              number in the lobby. An admin decides whether we work with them, and then you build the full
+              profile afterwards.
+            </p>
+            <p>
+              <strong className="font-semibold">Already have everything?</strong> Skip this form.{' '}
+              <Link to="/salesman/listings" className="underline font-semibold hover:text-sky-700">
+                Start the full profile directly
+              </Link>{' '}
+              — it goes straight to one admin review, not two.
+            </p>
+          </div>
+        </div>
+
         <div className="max-w-2xl bg-white rounded-3xl shadow-sm border border-slate-100 p-10 space-y-8">
+          {error && (
+            <div className="bg-rose-50 border border-rose-100 text-rose-700 text-sm px-4 py-3 rounded-xl flex items-start gap-2">
+              <span className="material-symbols-outlined text-[18px] mt-px">error</span>
+              <span>
+                <strong className="font-semibold">Could not save this lead.</strong> {error}
+              </span>
+            </div>
+          )}
+
           {done && (
             <div className="bg-emerald-50 border border-emerald-100 text-emerald-700 text-sm px-4 py-3 rounded-xl flex items-center gap-2">
               <span className="material-symbols-outlined text-[18px]">check_circle</span> Submitted — waiting on admin approval.
@@ -111,3 +153,16 @@ const SubmitButton: React.FC<{ submitting: boolean }> = ({ submitting }) => (
     </button>
   </div>
 );
+
+// Supabase errors arrive as PostgrestError ({ message, code, details }),
+// never as an Error instance, so `err.message` alone would render
+// "[object Object]" for the exact failures worth reading. RLS rejections
+// (42501) get a plain-language translation -- an agent can act on "ask an
+// admin", they can't act on "new row violates row-level security policy".
+function errorMessage(err: unknown): string {
+  const e = err as { message?: string; code?: string } | null;
+  if (e?.code === '42501') return 'Your account does not have permission to add vendors. Ask an admin to check your access.';
+  if (e?.code === '23514') return 'One of the values was rejected by the database. Check the Role field and try again.';
+  if (e?.message) return e.message;
+  return 'Unexpected error. Please try again.';
+}
