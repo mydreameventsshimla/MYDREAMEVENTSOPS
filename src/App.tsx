@@ -10,6 +10,7 @@ import { ManagerPipeline } from './pages/manager/ManagerPipeline';
 import { ManagerClients } from './pages/manager/ManagerClients';
 import { EventWorkspace } from './pages/manager/EventWorkspace';
 import { ClientHistory } from './pages/manager/ClientHistory';
+import { ManagerProfile } from './pages/manager/ManagerProfile';
 
 import { AdminOverviewPage } from './pages/admin/AdminOverview';
 import { AdminEnquiries } from './pages/admin/AdminEnquiries';
@@ -70,6 +71,7 @@ const GatedApp: React.FC = () => {
         <Route path="/manager/event/:enquiryId" element={<RoleGuard allow="manager"><EventWorkspace /></RoleGuard>} />
         <Route path="/manager/history/:enquiryId" element={<RoleGuard allow="manager"><ClientHistory /></RoleGuard>} />
         <Route path="/manager/analytics" element={<RoleGuard allow="manager"><ManagerClients /></RoleGuard>} />
+        <Route path="/manager/profile" element={<RoleGuard allow="manager"><ManagerProfile /></RoleGuard>} />
 
         <Route path="/admin" element={<RoleGuard allow="admin"><AdminOverviewPage /></RoleGuard>} />
         <Route path="/admin/enquiries" element={<RoleGuard allow="admin"><AdminEnquiries /></RoleGuard>} />

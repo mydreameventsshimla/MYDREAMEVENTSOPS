@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { setMyPassword, fetchMyStaffProfile, updateMyProfile } from '../lib/auth';
 import { useStaff } from '../context/StaffContext';
 import { StaffProfile } from '../types';
+import { COUNTRY_CODES, MIN_DIGITS_BY_CODE, splitPhoneNumber } from '../data/countryCodes';
 
 // Landing page for both invite links and "forgot password" links.
 // supabase-js has already turned the link's token into a temporary signed-in
@@ -26,7 +27,9 @@ export const SetPassword: React.FC = () => {
   const [profile, setProfile] = useState<StaffProfile | null>(null);
 
   const [fullName, setFullName] = useState('');
-  const [whatsapp, setWhatsapp] = useState('');
+  const [whatsappCode, setWhatsappCode] = useState('+91');
+  const [whatsappDigits, setWhatsappDigits] = useState('');
+  const [meetLink, setMeetLink] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -38,7 +41,10 @@ export const SetPassword: React.FC = () => {
       setProfile(p);
       if (p) {
         setFullName(p.full_name);
-        setWhatsapp(p.whatsapp_number ?? '');
+        const { code, digits } = splitPhoneNumber(p.whatsapp_number);
+        setWhatsappCode(code);
+        setWhatsappDigits(digits);
+        setMeetLink(p.meet_link ?? '');
       }
       setLoadingProfile(false);
     });
@@ -60,12 +66,21 @@ export const SetPassword: React.FC = () => {
       setError('Your name can’t be blank.');
       return;
     }
-    if (whatsappRequired && !whatsapp.trim()) {
+    if (whatsappRequired && !whatsappDigits.trim()) {
       setError('Add a WhatsApp number — couples use it to reach you directly once you’re assigned a lead.');
       return;
     }
-    if (whatsapp.trim() && !/^\+?[0-9 ()-]{7,20}$/.test(whatsapp.trim())) {
-      setError('That doesn’t look like a phone number — digits, spaces, and an optional leading + only.');
+    // A number typed without its country code silently mismatches
+    // wa.me/tel: links downstream (they need the code baked in) — this is
+    // the exact bug a single free-text field kept causing, hence the
+    // separate selector rather than one field with a placeholder hint.
+    const digitsOnly = whatsappDigits.replace(/\D/g, '');
+    if (digitsOnly && digitsOnly.length < (MIN_DIGITS_BY_CODE[whatsappCode] || 8)) {
+      setError(`That doesn’t look like a valid ${whatsappCode} number.`);
+      return;
+    }
+    if (meetLink.trim() && !meetLink.trim().startsWith('https://')) {
+      setError('Your video call link needs to start with https:// — paste your Meet or Zoom room link directly.');
       return;
     }
     if (password.length < 8) {
@@ -84,7 +99,8 @@ export const SetPassword: React.FC = () => {
       // one-time form to finish it. Failing loud here, before the
       // irreversible step, is the safer order.
       if (profile) {
-        await updateMyProfile({ full_name: fullName.trim(), whatsapp_number: whatsapp.trim() });
+        const whatsappNumber = digitsOnly ? `${whatsappCode}${digitsOnly}` : null;
+        await updateMyProfile({ full_name: fullName.trim(), whatsapp_number: whatsappNumber, meet_link: meetLink.trim() || null });
       }
       await setMyPassword(password);
       await refresh();
@@ -137,20 +153,49 @@ export const SetPassword: React.FC = () => {
                   <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
                     WhatsApp Number{whatsappRequired && <span className="text-rose-500"> *</span>}
                   </label>
-                  <input
-                    type="tel"
-                    required={whatsappRequired}
-                    value={whatsapp}
-                    onChange={(e) => setWhatsapp(e.target.value)}
-                    placeholder="+91 98765 43210"
-                    className="w-full p-4 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
-                  />
+                  <div className="flex gap-2">
+                    <select
+                      value={whatsappCode}
+                      onChange={(e) => setWhatsappCode(e.target.value)}
+                      className="p-4 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none w-[120px] shrink-0"
+                    >
+                      {COUNTRY_CODES.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
+                    </select>
+                    <input
+                      type="tel"
+                      inputMode="numeric"
+                      required={whatsappRequired}
+                      value={whatsappDigits}
+                      onChange={(e) => setWhatsappDigits(e.target.value)}
+                      placeholder="98765 43210"
+                      className="flex-1 min-w-0 p-4 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
+                    />
+                  </div>
                   <p className="text-[11px] text-slate-400 ml-1">
                     {profile.role === 'manager'
                       ? 'Couples chat with you here once they’re assigned to you — this is not shown publicly.'
                       : 'Optional for your role today. Not shown publicly.'}
                   </p>
                 </div>
+
+                {profile.role === 'manager' && (
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">
+                      Video Call Link <span className="text-slate-300 normal-case font-normal">(optional)</span>
+                    </label>
+                    <input
+                      type="url"
+                      value={meetLink}
+                      onChange={(e) => setMeetLink(e.target.value)}
+                      placeholder="https://meet.google.com/your-room"
+                      className="w-full p-4 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
+                    />
+                    <p className="text-[11px] text-slate-400 ml-1">
+                      A standing Google Meet or Zoom room. The "Video call" button on a couple's dashboard opens this
+                      directly — leave it blank for now and add it later from your profile if you don't have one yet.
+                    </p>
+                  </div>
+                )}
               </>
             )}
 

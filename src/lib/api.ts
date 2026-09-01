@@ -30,6 +30,17 @@ import {
   ListingPackage,
   ListingAvailability,
   AvailabilityStatus,
+  EnquiryTask,
+  TaskStatus,
+  EnquiryPayment,
+  Proposal,
+  ProposalLineItem,
+  EventFunction,
+  GuestAccommodation,
+  ConfirmedVendor,
+  ConfirmedVendorStatus,
+  ShortlistedVenue,
+  VisitRequestInfo,
 } from '../types';
 
 // ============================================================================
@@ -46,13 +57,14 @@ function mapStaffRow(row: any): StaffProfile {
     is_active: row.is_active,
     role: DB_TO_APP_ROLE[row.role as DbStaffRole],
     whatsapp_number: row.whatsapp_number ?? null,
+    meet_link: row.meet_link ?? null,
   };
 }
 
 export async function fetchStaffRoster(role?: StaffRole): Promise<StaffProfile[]> {
   let query = supabase
     .from('admin_users')
-    .select('id, full_name, email, role, is_active, whatsapp_number')
+    .select('id, full_name, email, role, is_active, whatsapp_number, meet_link')
     .eq('is_active', true)
     .order('full_name');
   if (role) query = query.eq('role', APP_TO_DB_ROLE[role]);
@@ -132,7 +144,7 @@ export async function updateEnquiryStatus(enquiryId: string, status: EnquiryStat
 // re-fetch off of this.
 export function subscribeToEnquiries(onChange: () => void): () => void {
   const channel = supabase
-    .channel('ops:enquiries')
+    .channel(`ops:enquiries:${Math.random().toString(36).slice(2)}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'enquiries' }, onChange)
     .subscribe();
   return () => {
@@ -171,7 +183,7 @@ export async function fetchPushesForEnquiry(enquiryId: string): Promise<VendorPu
 
 export function subscribeToPushes(enquiryId: string, onChange: () => void): () => void {
   const channel = supabase
-    .channel(`ops:pushes:${enquiryId}`)
+    .channel(`ops:pushes:${enquiryId}:${Math.random().toString(36).slice(2)}`)
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'enquiry_vendor_pushes', filter: `enquiry_id=eq.${enquiryId}` },
@@ -348,7 +360,7 @@ export async function updateRecruitmentStatus(targetId: string, status: Recruitm
 
 export function subscribeToMyTargets(salesmanId: string, onChange: () => void): () => void {
   const channel = supabase
-    .channel(`ops:targets:${salesmanId}`)
+    .channel(`ops:targets:${salesmanId}:${Math.random().toString(36).slice(2)}`)
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'vendor_recruitment_targets', filter: `assigned_salesman_id=eq.${salesmanId}` },
@@ -433,7 +445,7 @@ export async function setStaffActive(staffId: string, isActive: boolean): Promis
 export async function fetchFullStaffRoster(): Promise<StaffProfile[]> {
   const { data, error } = await supabase
     .from('admin_users')
-    .select('id, full_name, email, role, is_active, whatsapp_number')
+    .select('id, full_name, email, role, is_active, whatsapp_number, meet_link')
     .order('role')
     .order('full_name');
   if (error) throw error;
@@ -584,10 +596,57 @@ export async function addActivityNote(enquiryId: string, staffId: string, conten
 
 export function subscribeToActivityLog(enquiryId: string, onChange: () => void): () => void {
   const channel = supabase
-    .channel(`ops:activity:${enquiryId}`)
+    .channel(`ops:activity:${enquiryId}:${Math.random().toString(36).slice(2)}`)
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'enquiry_activity_log', filter: `enquiry_id=eq.${enquiryId}` },
+      onChange
+    )
+    .subscribe();
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
+// ============================================================================
+// PLANNER CHAT (0024) — separate from enquiry_activity_log on purpose:
+// that table is an internal audit trail staff reads about a client, this
+// one is a conversation the client reads too. Mixing them would mean
+// either every internal note leaks to the couple, or every chat message
+// gets buried in claim/assignment/push noise no couple should see.
+// ============================================================================
+export interface EnquiryMessage {
+  id: string;
+  enquiry_id: string;
+  sender: 'client' | 'staff';
+  sender_name: string;
+  body: string;
+  created_at: string;
+}
+
+export async function fetchEnquiryMessages(enquiryId: string): Promise<EnquiryMessage[]> {
+  const { data, error } = await supabase
+    .from('enquiry_messages')
+    .select('id, enquiry_id, sender, sender_name, body, created_at')
+    .eq('enquiry_id', enquiryId)
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return (data as EnquiryMessage[]) || [];
+}
+
+export async function sendStaffMessage(enquiryId: string, staffId: string, senderName: string, body: string): Promise<void> {
+  const { error } = await supabase
+    .from('enquiry_messages')
+    .insert({ enquiry_id: enquiryId, sender: 'staff', sender_name: senderName, staff_id: staffId, body });
+  if (error) throw error;
+}
+
+export function subscribeToEnquiryMessages(enquiryId: string, onChange: () => void): () => void {
+  const channel = supabase
+    .channel(`ops:messages:${enquiryId}:${Math.random().toString(36).slice(2)}`)
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'enquiry_messages', filter: `enquiry_id=eq.${enquiryId}` },
       onChange
     )
     .subscribe();
@@ -641,7 +700,7 @@ export async function fetchGuestsForEnquiryStaff(enquiryId: string): Promise<Gue
 
 export function subscribeToGuestsStaff(enquiryId: string, onChange: () => void): () => void {
   const channel = supabase
-    .channel(`ops:guests:${enquiryId}`)
+    .channel(`ops:guests:${enquiryId}:${Math.random().toString(36).slice(2)}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'guests', filter: `enquiry_id=eq.${enquiryId}` }, onChange)
     .subscribe();
   return () => {
@@ -881,7 +940,7 @@ export async function setListingMerchandising(
 // vendor_listings to the supabase_realtime publication for exactly this.
 export function subscribeToListings(onChange: () => void): () => void {
   const channel = supabase
-    .channel('ops:vendor_listings')
+    .channel(`ops:vendor_listings:${Math.random().toString(36).slice(2)}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'vendor_listings' }, onChange)
     .subscribe();
   return () => { supabase.removeChannel(channel); };
@@ -950,4 +1009,496 @@ export async function fetchMediaCounts(listingIds: string[]): Promise<Map<string
     counts.set(row.listing_id, (counts.get(row.listing_id) ?? 0) + 1);
   }
   return counts;
+}
+
+// ============================================================================
+// FOLLOW-UP TASKS (0025) — feeds the pipeline's overdue count and a
+// per-lead reminder list. Planner-scoped, matching enquiry_messages'
+// shape: staff_id = my_staff_id() is both the ownership key and the RLS
+// predicate, so a fetch of "my tasks" needs no enquiry join at all.
+// ============================================================================
+
+export async function fetchMyTasks(staffId: string): Promise<EnquiryTask[]> {
+  const { data, error } = await supabase
+    .from('enquiry_tasks')
+    .select('*')
+    .eq('staff_id', staffId)
+    .order('due_at', { ascending: true });
+  if (error) throw error;
+  return (data as EnquiryTask[]) || [];
+}
+
+export async function fetchTasksForEnquiry(enquiryId: string): Promise<EnquiryTask[]> {
+  const { data, error } = await supabase
+    .from('enquiry_tasks')
+    .select('*')
+    .eq('enquiry_id', enquiryId)
+    .order('due_at', { ascending: true });
+  if (error) throw error;
+  return (data as EnquiryTask[]) || [];
+}
+
+export async function createTask(enquiryId: string, staffId: string, title: string, dueAt: string): Promise<void> {
+  const { error } = await supabase.from('enquiry_tasks').insert({ enquiry_id: enquiryId, staff_id: staffId, title, due_at: dueAt });
+  if (error) throw error;
+}
+
+export async function setTaskStatus(taskId: string, status: TaskStatus): Promise<void> {
+  const { error } = await supabase
+    .from('enquiry_tasks')
+    .update({ status, completed_at: status === 'done' ? new Date().toISOString() : null })
+    .eq('id', taskId);
+  if (error) throw error;
+}
+
+export function subscribeToMyTasks(staffId: string, onChange: () => void): () => void {
+  const channel = supabase
+    .channel(`ops:tasks:${staffId}:${Math.random().toString(36).slice(2)}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'enquiry_tasks', filter: `staff_id=eq.${staffId}` }, onChange)
+    .subscribe();
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
+// ============================================================================
+// PAYMENT / BUDGET LEDGER (0025) — one table, two directions (kind:
+// 'client_payment' | 'vendor_cost'). See the migration's own comment for
+// why this isn't two tables.
+// ============================================================================
+
+export async function fetchPaymentsForEnquiry(enquiryId: string): Promise<EnquiryPayment[]> {
+  const { data, error } = await supabase
+    .from('enquiry_payments')
+    .select('*')
+    .eq('enquiry_id', enquiryId)
+    .order('recorded_at', { ascending: false });
+  if (error) throw error;
+  return (data as EnquiryPayment[]) || [];
+}
+
+export async function addPayment(input: {
+  enquiryId: string;
+  kind: 'client_payment' | 'vendor_cost';
+  category: string;
+  amount: number;
+  status: 'pending' | 'received' | 'paid';
+  dueDate: string | null;
+  recordedBy: string;
+  notes?: string;
+}): Promise<void> {
+  const { error } = await supabase.from('enquiry_payments').insert({
+    enquiry_id: input.enquiryId,
+    kind: input.kind,
+    category: input.category || null,
+    amount: input.amount,
+    status: input.status,
+    due_date: input.dueDate,
+    recorded_by: input.recordedBy,
+    notes: input.notes || null,
+  });
+  if (error) throw error;
+}
+
+export async function updatePaymentStatus(paymentId: string, status: 'pending' | 'received' | 'paid'): Promise<void> {
+  const { error } = await supabase.from('enquiry_payments').update({ status }).eq('id', paymentId);
+  if (error) throw error;
+}
+
+export async function deletePayment(paymentId: string): Promise<void> {
+  const { error } = await supabase.from('enquiry_payments').delete().eq('id', paymentId);
+  if (error) throw error;
+}
+
+export function subscribeToPayments(enquiryId: string, onChange: () => void): () => void {
+  const channel = supabase
+    .channel(`ops:payments:${enquiryId}:${Math.random().toString(36).slice(2)}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'enquiry_payments', filter: `enquiry_id=eq.${enquiryId}` }, onChange)
+    .subscribe();
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
+// ============================================================================
+// PROPOSALS (0025) — a real document. Drafts are edited freely; sending
+// locks it into the couple's view (client RLS reads every proposal
+// regardless of status, but the client app's own query only ever asks for
+// 'sent'/'accepted'/'rejected' — a draft is never fetched by anyone but
+// its own planner). respond_to_proposal() (the client-side accept/reject
+// path) lives entirely in the database — see 0025's RPC.
+// ============================================================================
+
+export async function fetchProposalsForEnquiry(enquiryId: string): Promise<Proposal[]> {
+  const { data, error } = await supabase
+    .from('proposals')
+    .select('*')
+    .eq('enquiry_id', enquiryId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data as Proposal[]) || [];
+}
+
+export async function createProposal(input: {
+  enquiryId: string;
+  createdBy: string;
+  title: string;
+  venueId: string | null;
+  venueName: string | null;
+  eventDate: string | null;
+  lineItems: ProposalLineItem[];
+  notes?: string;
+}): Promise<Proposal> {
+  const totalPrice = input.lineItems.reduce((sum, li) => sum + (li.price || 0), 0);
+  const { data, error } = await supabase
+    .from('proposals')
+    .insert({
+      enquiry_id: input.enquiryId,
+      created_by: input.createdBy,
+      title: input.title,
+      venue_id: input.venueId,
+      venue_name: input.venueName,
+      event_date: input.eventDate,
+      line_items: input.lineItems,
+      total_price: totalPrice,
+      notes: input.notes || null,
+    })
+    .select('*')
+    .single();
+  if (error) throw error;
+  return data as Proposal;
+}
+
+export async function updateProposalDraft(
+  proposalId: string,
+  patch: Partial<{ title: string; venueId: string | null; venueName: string | null; eventDate: string | null; lineItems: ProposalLineItem[]; notes: string }>
+): Promise<void> {
+  const update: Record<string, unknown> = {};
+  if (patch.title !== undefined) update.title = patch.title;
+  if (patch.venueId !== undefined) update.venue_id = patch.venueId;
+  if (patch.venueName !== undefined) update.venue_name = patch.venueName;
+  if (patch.eventDate !== undefined) update.event_date = patch.eventDate;
+  if (patch.notes !== undefined) update.notes = patch.notes;
+  if (patch.lineItems !== undefined) {
+    update.line_items = patch.lineItems;
+    update.total_price = patch.lineItems.reduce((sum, li) => sum + (li.price || 0), 0);
+  }
+  const { error } = await supabase.from('proposals').update(update).eq('id', proposalId);
+  if (error) throw error;
+}
+
+// Sending also flips the enquiry's status to 'proposal_sent' (if it is not
+// already further along) and logs it on the activity timeline — a
+// manager doesn't have to separately remember to update the status
+// dropdown after sending.
+export async function sendProposal(proposalId: string, enquiryId: string, staffId: string, title: string): Promise<void> {
+  const { error } = await supabase.from('proposals').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', proposalId);
+  if (error) throw error;
+
+  await supabase.from('enquiry_activity_log').insert({
+    enquiry_id: enquiryId,
+    staff_id: staffId,
+    type: 'proposal',
+    content: `Sent proposal: "${title}"`,
+    meta: { proposal_id: proposalId },
+  });
+
+  await supabase.from('enquiries').update({ status: 'proposal_sent' }).eq('id', enquiryId).in('status', ['new', 'contacted', 'qualified']);
+}
+
+export async function deleteProposal(proposalId: string): Promise<void> {
+  const { error } = await supabase.from('proposals').delete().eq('id', proposalId);
+  if (error) throw error;
+}
+
+export function subscribeToProposals(enquiryId: string, onChange: () => void): () => void {
+  const channel = supabase
+    .channel(`ops:proposals:${enquiryId}:${Math.random().toString(36).slice(2)}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'proposals', filter: `enquiry_id=eq.${enquiryId}` }, onChange)
+    .subscribe();
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
+// ============================================================================
+// CONFIRMED EVENT DATE / VENUE (0025) — manual override; the same fields
+// get set automatically when a proposal is accepted (see the RPC), this
+// is for a manager confirming a date by hand instead (e.g. the couple
+// confirmed over a phone call, no proposal flow used).
+// ============================================================================
+
+export async function setConfirmedEvent(enquiryId: string, eventDate: string | null, venueName: string | null): Promise<void> {
+  const { error } = await supabase.from('enquiries').update({ event_date: eventDate, confirmed_venue_name: venueName }).eq('id', enquiryId);
+  if (error) throw error;
+}
+
+// ============================================================================
+// CLIENT NOTIFICATIONS (0025) — pushes to the couple's phone, sent from
+// the staff side. Routes through server.ts/api/notify-client.ts, which
+// holds the one secret (PUSH_SEND_SECRET) that lets it call across to
+// minimalist-muse's own /api/send-push — this app's browser bundle never
+// sees that secret, only the caller's own access token goes out.
+// ============================================================================
+
+export async function notifyClient(enquiryId: string, title: string, body: string): Promise<{ sent: number; failed: number }> {
+  return callApi('/api/notify-client', { enquiryId, title, body });
+}
+
+// ============================================================================
+// EVENT FUNCTIONS (0026) — the real, per-day breakdown underneath
+// enquiries.event_date. See that migration's own comment for why this
+// exists as a separate table rather than more columns on enquiries.
+// ============================================================================
+
+export async function fetchFunctionsForEnquiry(enquiryId: string): Promise<EventFunction[]> {
+  const { data, error } = await supabase
+    .from('event_functions')
+    .select('*')
+    .eq('enquiry_id', enquiryId)
+    .order('display_order', { ascending: true });
+  if (error) throw error;
+  return (data as EventFunction[]) || [];
+}
+
+export async function createFunction(input: {
+  enquiryId: string;
+  name: string;
+  functionDate: string | null;
+  startTime: string | null;
+  venueId: string | null;
+  venueName: string | null;
+  guestCountEstimate: number | null;
+  notes?: string;
+  displayOrder: number;
+}): Promise<void> {
+  const { error } = await supabase.from('event_functions').insert({
+    enquiry_id: input.enquiryId,
+    name: input.name,
+    function_date: input.functionDate,
+    start_time: input.startTime,
+    venue_id: input.venueId,
+    venue_name: input.venueName,
+    guest_count_estimate: input.guestCountEstimate,
+    notes: input.notes || null,
+    display_order: input.displayOrder,
+  });
+  if (error) throw error;
+}
+
+export async function updateFunction(
+  functionId: string,
+  patch: Partial<{ name: string; functionDate: string | null; startTime: string | null; venueId: string | null; venueName: string | null; guestCountEstimate: number | null; notes: string }>
+): Promise<void> {
+  const update: Record<string, unknown> = {};
+  if (patch.name !== undefined) update.name = patch.name;
+  if (patch.functionDate !== undefined) update.function_date = patch.functionDate;
+  if (patch.startTime !== undefined) update.start_time = patch.startTime;
+  if (patch.venueId !== undefined) update.venue_id = patch.venueId;
+  if (patch.venueName !== undefined) update.venue_name = patch.venueName;
+  if (patch.guestCountEstimate !== undefined) update.guest_count_estimate = patch.guestCountEstimate;
+  if (patch.notes !== undefined) update.notes = patch.notes;
+  const { error } = await supabase.from('event_functions').update(update).eq('id', functionId);
+  if (error) throw error;
+}
+
+export async function deleteFunction(functionId: string): Promise<void> {
+  const { error } = await supabase.from('event_functions').delete().eq('id', functionId);
+  if (error) throw error;
+}
+
+export function subscribeToFunctions(enquiryId: string, onChange: () => void): () => void {
+  const channel = supabase
+    .channel(`ops:functions:${enquiryId}:${Math.random().toString(36).slice(2)}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'event_functions', filter: `enquiry_id=eq.${enquiryId}` }, onChange)
+    .subscribe();
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
+// A manager's own events calendar plots one dot per function date across
+// every enquiry assigned to them, not just the single headline
+// event_date per enquiry — a couple with a Mehendi on the 12th and a
+// Wedding on the 14th shows up as two separate days, not one.
+export async function fetchMyFunctionDates(enquiryIds: string[]): Promise<EventFunction[]> {
+  if (enquiryIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from('event_functions')
+    .select('*')
+    .in('enquiry_id', enquiryIds)
+    .not('function_date', 'is', null);
+  if (error) throw error;
+  return (data as EventFunction[]) || [];
+}
+
+// ============================================================================
+// GUEST ACCOMMODATIONS (0027) — the manager's room-block tool, separate
+// from the guest's own travel fields (which they fill in at RSVP time).
+// ============================================================================
+
+export async function fetchAccommodationsForGuests(guestIds: string[]): Promise<GuestAccommodation[]> {
+  if (guestIds.length === 0) return [];
+  const { data, error } = await supabase.from('guest_accommodations').select('*').in('guest_id', guestIds);
+  if (error) throw error;
+  return (data as GuestAccommodation[]) || [];
+}
+
+export async function upsertAccommodation(input: {
+  id?: string;
+  guestId: string;
+  hotelName: string;
+  roomType: string;
+  roomNumber: string;
+  checkIn: string | null;
+  checkOut: string | null;
+  notes?: string;
+}): Promise<void> {
+  const row = {
+    guest_id: input.guestId,
+    hotel_name: input.hotelName || null,
+    room_type: input.roomType || null,
+    room_number: input.roomNumber || null,
+    check_in: input.checkIn,
+    check_out: input.checkOut,
+    notes: input.notes || null,
+  };
+  const { error } = input.id
+    ? await supabase.from('guest_accommodations').update(row).eq('id', input.id)
+    : await supabase.from('guest_accommodations').insert(row);
+  if (error) throw error;
+}
+
+export async function deleteAccommodation(id: string): Promise<void> {
+  const { error } = await supabase.from('guest_accommodations').delete().eq('id', id);
+  if (error) throw error;
+}
+
+export function subscribeToAccommodations(onChange: () => void): () => void {
+  const channel = supabase
+    .channel(`ops:accommodations:${Math.random().toString(36).slice(2)}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'guest_accommodations' }, onChange)
+    .subscribe();
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
+// ============================================================================
+// CONFIRMED VENDORS (0028) — the real "booked" roster, separate from
+// enquiry_vendor_pushes (a suggestion mechanism a couple reacts to).
+// ============================================================================
+
+export async function fetchConfirmedVendors(enquiryId: string): Promise<ConfirmedVendor[]> {
+  const { data, error } = await supabase
+    .from('confirmed_vendors')
+    .select('*')
+    .eq('enquiry_id', enquiryId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data as ConfirmedVendor[]) || [];
+}
+
+export async function upsertConfirmedVendor(input: {
+  id?: string;
+  enquiryId: string;
+  functionId: string | null;
+  category: string;
+  vendorName: string;
+  contactPerson: string;
+  contactPhone: string;
+  contactEmail: string;
+  agreedPrice: number | null;
+  status: ConfirmedVendorStatus;
+  catalogRefTable?: string | null;
+  catalogRefId?: string | null;
+  notes?: string;
+}): Promise<void> {
+  const row = {
+    enquiry_id: input.enquiryId,
+    function_id: input.functionId,
+    category: input.category,
+    vendor_name: input.vendorName,
+    contact_person: input.contactPerson || null,
+    contact_phone: input.contactPhone || null,
+    contact_email: input.contactEmail || null,
+    agreed_price: input.agreedPrice,
+    status: input.status,
+    catalog_ref_table: input.catalogRefTable ?? null,
+    catalog_ref_id: input.catalogRefId ?? null,
+    notes: input.notes || null,
+  };
+  const { error } = input.id
+    ? await supabase.from('confirmed_vendors').update(row).eq('id', input.id)
+    : await supabase.from('confirmed_vendors').insert(row);
+  if (error) throw error;
+}
+
+export async function deleteConfirmedVendor(id: string): Promise<void> {
+  const { error } = await supabase.from('confirmed_vendors').delete().eq('id', id);
+  if (error) throw error;
+}
+
+export function subscribeToConfirmedVendors(enquiryId: string, onChange: () => void): () => void {
+  const channel = supabase
+    .channel(`ops:vendors:${enquiryId}:${Math.random().toString(36).slice(2)}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'confirmed_vendors', filter: `enquiry_id=eq.${enquiryId}` }, onChange)
+    .subscribe();
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
+// ============================================================================
+// CLIENT ENGAGEMENT SIGNALS (0029) — what the manager sees before booking a
+// vendor blind. Two independent sources (see types.ts's comment on why).
+// ============================================================================
+
+export async function fetchClientShortlist(clientId: string): Promise<ShortlistedVenue[]> {
+  // Live column is `shortlisted_at`, not `created_at` — the table predates
+  // the `created_at` convention the rest of this schema settled on later.
+  const { data, error } = await supabase
+    .from('client_venue_shortlists')
+    .select('venue_id, shortlisted_at, venues(name)')
+    .eq('client_id', clientId);
+  if (error) throw error;
+  return ((data as any[]) || []).map((row) => ({
+    venue_id: row.venue_id,
+    venue_name: row.venues?.name || 'Unknown venue',
+    created_at: row.shortlisted_at,
+  }));
+}
+
+export async function fetchVisitRequests(enquiryId: string): Promise<VisitRequestInfo[]> {
+  const { data, error } = await supabase
+    .from('venue_visit_requests')
+    .select('id, venue_id, requested_date, status, vendor_listings(name)')
+    .eq('enquiry_id', enquiryId);
+  if (error) throw error;
+  return ((data as any[]) || []).map((row) => ({
+    id: row.id,
+    venue_id: row.venue_id,
+    venue_name: row.vendor_listings?.name || 'Unknown venue',
+    requested_date: row.requested_date,
+    status: row.status,
+  }));
+}
+
+// ============================================================================
+// GUEST EDITING (staff) — the "planner manages guests on own enquiries"
+// RLS policy (0013) already grants full CRUD; this was purely a missing
+// UI affordance, not a missing permission.
+// ============================================================================
+
+export async function updateGuestStaff(
+  guestId: string,
+  patch: Partial<{
+    full_name: string; relation: string | null; side: string | null; coming_from: string | null;
+    phone: string | null; email: string | null; rsvp_status: string; plus_ones: number; dietary_notes: string | null;
+    arrival_date: string | null; arrival_time: string | null; departure_date: string | null;
+    needs_accommodation: boolean; needs_transport: boolean; travel_notes: string | null;
+  }>
+): Promise<void> {
+  const { error } = await supabase.from('guests').update(patch).eq('id', guestId);
+  if (error) throw error;
 }

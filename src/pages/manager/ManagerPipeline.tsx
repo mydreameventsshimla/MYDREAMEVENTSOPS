@@ -1,9 +1,14 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Page, Main, TopHeader, StatTile, StatusBadge } from '../../components/Shell';
 import { useStaff } from '../../context/StaffContext';
-import { claimEnquiry, fetchMyEnquiries, fetchUnclaimedEnquiries, subscribeToEnquiries } from '../../lib/api';
-import { EnquiryWithClient } from '../../types';
+import {
+  claimEnquiry, fetchMyEnquiries, fetchUnclaimedEnquiries, subscribeToEnquiries,
+  fetchMyTasks, subscribeToMyTasks, fetchMyFunctionDates,
+} from '../../lib/api';
+import { EnquiryWithClient, EnquiryTask, EventFunction } from '../../types';
+import { DashboardCalendar, CalendarEntry } from '../../components/DashboardCalendar';
+import { FollowUpsPanel } from '../../components/FollowUpsPanel';
 
 function displayName(e: EnquiryWithClient) {
   return e.client?.full_name || 'Unnamed lead';
@@ -24,6 +29,8 @@ export const ManagerPipeline: React.FC = () => {
   const navigate = useNavigate();
   const [chute, setChute] = useState<EnquiryWithClient[]>([]);
   const [mine, setMine] = useState<EnquiryWithClient[]>([]);
+  const [tasks, setTasks] = useState<EnquiryTask[]>([]);
+  const [functions, setFunctions] = useState<EventFunction[]>([]);
   const [loading, setLoading] = useState(true);
   const [claiming, setClaiming] = useState<string | null>(null);
 
@@ -33,6 +40,15 @@ export const ManagerPipeline: React.FC = () => {
     setChute(chuteRows);
     setMine(mineRows);
     setLoading(false);
+    // The individual functions (Mehendi, Sangeet…) that belong to this
+    // manager's own leads — depends on `mine` having just loaded, so this
+    // is a second pass rather than a parallel fetch.
+    setFunctions(await fetchMyFunctionDates(mineRows.map((e) => e.id)));
+  }, [staff]);
+
+  const loadTasks = useCallback(async () => {
+    if (!staff) return;
+    setTasks(await fetchMyTasks(staff.id));
   }, [staff]);
 
   useEffect(() => {
@@ -42,6 +58,37 @@ export const ManagerPipeline: React.FC = () => {
     const unsubscribe = subscribeToEnquiries(load);
     return unsubscribe;
   }, [load]);
+
+  useEffect(() => {
+    if (!staff) return;
+    loadTasks();
+    return subscribeToMyTasks(staff.id, loadTasks);
+  }, [staff, loadTasks]);
+
+  const clientNameByEnquiry = useMemo(
+    () => new Map(mine.map((e) => [e.id, e.client?.full_name || 'Unnamed lead'])),
+    [mine]
+  );
+
+  // One calendar entry per dated thing: an enquiry's own headline date
+  // (its "when's the main day" quick-glance field) plus every individual
+  // event_function date built out in that lead's Itinerary — a couple
+  // with a Mehendi and a Wedding on different days shows up as two marked
+  // days, not one.
+  const calendarEntries: CalendarEntry[] = useMemo(() => {
+    const headline: CalendarEntry[] = mine
+      .filter((e) => e.event_date)
+      .map((e) => ({ id: `enquiry:${e.id}`, enquiryId: e.id, date: e.event_date as string, label: displayName(e) }));
+    const perFunction: CalendarEntry[] = functions
+      .filter((f) => f.function_date)
+      .map((f) => ({
+        id: `function:${f.id}`,
+        enquiryId: f.enquiry_id,
+        date: f.function_date as string,
+        label: `${clientNameByEnquiry.get(f.enquiry_id) || 'Unnamed lead'} — ${f.name}`,
+      }));
+    return [...headline, ...perFunction];
+  }, [mine, functions, clientNameByEnquiry]);
 
   const handleClaim = async (enquiryId: string) => {
     setClaiming(enquiryId);
@@ -60,17 +107,29 @@ export const ManagerPipeline: React.FC = () => {
   };
 
   const active = mine.filter((e) => e.status !== 'won' && e.status !== 'lost');
-  const overdue = 0; // placeholder metric; wire up to a real "last activity" timestamp when available
+  // Real, as of 0025 — pending follow-up tasks whose due date has passed.
+  const overdue = tasks.filter((t) => t.status === 'pending' && new Date(t.due_at).getTime() < Date.now()).length;
 
   return (
     <Page>
       <TopHeader title="Lead Pipeline" subtitle={`Welcome back, ${staff?.full_name.split(' ')[0]}`} />
       <Main>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-6">
           <StatTile label="Leads Assigned" value={mine.length} icon="contact_page" />
           <StatTile label="Active Events" value={active.length} icon="event" />
           <StatTile label="Won" value={mine.filter((e) => e.status === 'won').length} icon="task_alt" />
+          <StatTile label="Overdue Follow-ups" value={overdue} tone={overdue > 0 ? 'dark' : undefined} icon="notifications_active" />
           <StatTile label="Unclaimed in Chute" value={chute.length} tone="dark" icon="inbox" />
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6 items-start">
+          <DashboardCalendar entries={calendarEntries} onOpenEvent={(id) => navigate(`/manager/event/${id}`)} />
+          <FollowUpsPanel
+            tasks={tasks}
+            clientNameByEnquiry={clientNameByEnquiry}
+            onOpenEnquiry={(id) => navigate(`/manager/event/${id}`)}
+            onChanged={loadTasks}
+          />
         </div>
 
         <section className="space-y-4">

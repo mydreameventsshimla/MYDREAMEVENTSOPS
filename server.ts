@@ -7,6 +7,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { createInviteAndSendEmail } from './api/_lib/inviteEmail.js';
 import { handleSignRequest, handleDestroyRequest } from './api/_lib/cloudinary.js';
+import { sendClientNotification } from './api/_lib/notifyClient.js';
 
 dotenv.config({ path: '.env.local' });
 
@@ -69,6 +70,35 @@ async function startServer() {
       return null;
     }
     return userData.user.id;
+  }
+
+  // Looser than requireAdmin: any active staff member, whatever their
+  // role. See api/_lib/adminAuth.ts's requireStaff for the Vercel twin —
+  // duplicated here (not imported) for the same reason requireAdmin above
+  // is: express.Request/Response, not @vercel/node's types.
+  async function requireStaff(req: express.Request, res: express.Response): Promise<{ id: string; role: string } | null> {
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.replace('Bearer ', '');
+    const admin = getAdminClient();
+    if (!token || !admin) {
+      res.status(401).json({ error: 'Not authenticated' });
+      return null;
+    }
+    const { data: userData, error: userErr } = await admin.auth.getUser(token);
+    if (userErr || !userData?.user) {
+      res.status(401).json({ error: 'Invalid session' });
+      return null;
+    }
+    const { data: staffRow } = await admin
+      .from('admin_users')
+      .select('id, role, is_active')
+      .eq('auth_user_id', userData.user.id)
+      .maybeSingle();
+    if (!staffRow || !staffRow.is_active) {
+      res.status(403).json({ error: 'Staff access required' });
+      return null;
+    }
+    return { id: staffRow.id, role: staffRow.role };
   }
 
   // Invite a new manager/salesman/admin: creates the Supabase Auth user in
@@ -174,6 +204,32 @@ async function startServer() {
       return res.status(status).json(body);
     } catch (err: any) {
       console.error('cloudinary-destroy error:', err);
+      return res.status(500).json({ error: 'Unexpected server error' });
+    }
+  });
+
+  // Pushes a notification to the client app on a planner's behalf — see
+  // api/_lib/notifyClient.ts. That function is shared verbatim with the
+  // Vercel version (api/notify-client.ts): it takes a plain
+  // SupabaseClient, not framework-specific req/res, so unlike
+  // requireAdmin/requireStaff above it doesn't need a duplicate.
+  app.post('/api/notify-client', privilegedLimiter, async (req, res) => {
+    try {
+      const staff = await requireStaff(req, res);
+      if (!staff) return;
+
+      const { enquiryId, title, body } = req.body || {};
+      if (!enquiryId || !title || !body) {
+        return res.status(400).json({ error: 'enquiryId, title and body are required.' });
+      }
+
+      const admin = getAdminClient();
+      if (!admin) return res.status(500).json({ error: 'Server not configured.' });
+
+      const result = await sendClientNotification(admin, staff.id, staff.role, enquiryId, title, body);
+      return res.status(result.status).json(result.body);
+    } catch (err: any) {
+      console.error('notify-client error:', err);
       return res.status(500).json({ error: 'Unexpected server error' });
     }
   });

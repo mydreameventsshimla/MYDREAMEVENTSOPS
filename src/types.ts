@@ -8,9 +8,13 @@ export interface StaffProfile {
   email: string;
   role: StaffRole;
   is_active: boolean;
-  // Migration 0019/0020. Null until the staff member sets it themselves at
-  // set-password time (managers) or an admin fills it in later.
+  // Migration 0019/0020/0024. Null until the staff member sets it
+  // themselves at set-password time (managers) or an admin fills it in
+  // later.
   whatsapp_number: string | null;
+  // Migration 0019/0024 — the couple's "Video call" button in the client
+  // app opens this directly. Self-service since 0024 (was admin-only).
+  meet_link: string | null;
 }
 
 // Matches the enquiries.status CHECK constraint in your real database.
@@ -42,6 +46,12 @@ export interface EnquiryRow {
   status: EnquiryStatus;
   claimed_at: string | null;
   created_at: string;
+  // 0025 — the real, confirmed date/venue once one exists, distinct from
+  // event_date_text (an intake-time guess like "next spring"). Set either
+  // by hand or automatically when a proposal is accepted.
+  event_date: string | null;
+  confirmed_venue_id: string | null;
+  confirmed_venue_name: string | null;
 }
 
 // Convenience shape used across manager/admin screens: an enquiry with its
@@ -52,7 +62,7 @@ export interface EnquiryWithClient extends EnquiryRow {
 }
 
 export type VendorRefTable = 'vendors' | 'venues' | 'decor_themes';
-export type PushStatus = 'pushed' | 'viewing' | 'wishlist' | 'skipped' | 'quote';
+export type PushStatus = 'pushed' | 'viewing' | 'wishlist' | 'skipped' | 'quote' | 'finalized';
 
 export interface VendorPush {
   id: string;
@@ -107,7 +117,84 @@ export interface VendorApplication {
 // notes/pushes and from the enquiry's own status/assignment history.
 export type ActivityType =
   | 'note' | 'status_change' | 'claim' | 'assignment' | 'push' | 'client_reaction'
-  | 'shortlist' | 'visit_request' | 'callback_request';
+  | 'shortlist' | 'visit_request' | 'callback_request' | 'proposal';
+
+// ============================================================================
+// 0025 — MANAGER POWER TOOLS: follow-up tasks, the payment/budget ledger,
+// and formal proposals.
+// ============================================================================
+export type TaskStatus = 'pending' | 'done' | 'dismissed';
+
+export interface EnquiryTask {
+  id: string;
+  enquiry_id: string;
+  staff_id: string;
+  title: string;
+  due_at: string;
+  status: TaskStatus;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export type PaymentKind = 'client_payment' | 'vendor_cost';
+export type PaymentStatus = 'pending' | 'received' | 'paid';
+
+export interface EnquiryPayment {
+  id: string;
+  enquiry_id: string;
+  kind: PaymentKind;
+  category: string | null;
+  amount: number;
+  status: PaymentStatus;
+  due_date: string | null;
+  recorded_at: string;
+  recorded_by: string | null;
+  notes: string | null;
+}
+
+export type ProposalStatus = 'draft' | 'sent' | 'accepted' | 'rejected';
+
+export interface ProposalLineItem {
+  category: string;
+  label: string;
+  price: number;
+  notes?: string;
+}
+
+// 0026 — the real, per-function breakdown underneath enquiries.event_date
+// (which stays the "headline" date). A wedding can have as many of these
+// as it actually has functions: Mehendi, Sangeet, the wedding ceremony,
+// the reception, each with its own date/time/venue.
+export interface EventFunction {
+  id: string;
+  enquiry_id: string;
+  name: string;
+  function_date: string | null;
+  start_time: string | null;
+  venue_id: string | null;
+  venue_name: string | null;
+  guest_count_estimate: number | null;
+  notes: string | null;
+  display_order: number;
+  created_at: string;
+}
+
+export interface Proposal {
+  id: string;
+  enquiry_id: string;
+  created_by: string | null;
+  title: string;
+  venue_id: string | null;
+  venue_name: string | null;
+  event_date: string | null;
+  line_items: ProposalLineItem[];
+  total_price: number | null;
+  status: ProposalStatus;
+  notes: string | null;
+  created_at: string;
+  sent_at: string | null;
+  responded_at: string | null;
+}
 
 export interface ActivityLogEntry {
   id: string;
@@ -156,6 +243,70 @@ export interface GuestRow {
   invited_at: string | null;
   responded_at: string | null;
   created_at: string;
+  // 0027 — collected at RSVP time.
+  arrival_date: string | null;
+  arrival_time: string | null;
+  departure_date: string | null;
+  needs_accommodation: boolean;
+  needs_transport: boolean;
+  travel_notes: string | null;
+}
+
+// 0027 — the manager's own room-block/assignment tool. Not guest-visible;
+// closes the MANAGER's coordination gap, not the guest's (a guest already
+// knows their own booking).
+export interface GuestAccommodation {
+  id: string;
+  guest_id: string;
+  hotel_name: string | null;
+  room_type: string | null;
+  room_number: string | null;
+  check_in: string | null;
+  check_out: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+// 0028 — the real "booked & confirmed" state, distinct from
+// enquiry_vendor_pushes (a discovery/suggestion mechanism). Not
+// restricted to the vendor catalog — catalog_ref_* stay null for a
+// vendor booked entirely outside it, which is common.
+export type ConfirmedVendorStatus = 'contract_pending' | 'confirmed' | 'deposit_paid' | 'cancelled';
+
+export interface ConfirmedVendor {
+  id: string;
+  enquiry_id: string;
+  function_id: string | null;
+  category: string;
+  vendor_name: string;
+  contact_person: string | null;
+  contact_phone: string | null;
+  contact_email: string | null;
+  agreed_price: number | null;
+  status: ConfirmedVendorStatus;
+  catalog_ref_table: string | null;
+  catalog_ref_id: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+// 0029 — client engagement signals surfaced to the manager, so booking a
+// vendor isn't blind. Two independent sources: the older shortlist/push
+// mechanism (both keyed against `venues`) and visit requests (keyed
+// against the newer `vendor_listings` catalog) — a pre-existing split in
+// this schema, not something introduced here.
+export interface ShortlistedVenue {
+  venue_id: string;
+  venue_name: string;
+  created_at: string;
+}
+
+export interface VisitRequestInfo {
+  id: string;
+  venue_id: string;
+  venue_name: string;
+  requested_date: string;
+  status: string;
 }
 
 // ============================================================================

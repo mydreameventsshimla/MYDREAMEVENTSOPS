@@ -14,6 +14,7 @@ const NAV_BY_ROLE: Record<StaffRole, NavItem[]> = {
     { path: '/manager', label: 'Lead Pipeline', icon: 'contact_page' },
     { path: '/manager/clients', label: 'My Clients', icon: 'groups' },
     { path: '/manager/analytics', label: 'My Performance', icon: 'analytics' },
+    { path: '/manager/profile', label: 'My Profile', icon: 'badge' },
   ],
   admin: [
     { path: '/admin', label: 'Overview', icon: 'space_dashboard' },

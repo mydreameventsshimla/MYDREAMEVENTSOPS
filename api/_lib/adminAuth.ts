@@ -53,6 +53,38 @@ export async function requireAdmin(req: VercelRequest, res: VercelResponse): Pro
   return userData.user.id;
 }
 
+// Looser than requireAdmin: any active staff member, whatever their role.
+// Callers that need to further restrict (e.g. "a planner, and only on
+// their own enquiry") do that check themselves with the returned row —
+// this only answers "is this a real, active member of staff".
+export async function requireStaff(
+  req: VercelRequest,
+  res: VercelResponse
+): Promise<{ id: string; role: string } | null> {
+  const authHeader = (req.headers.authorization as string) || '';
+  const token = authHeader.replace('Bearer ', '');
+  const admin = getAdminClient();
+  if (!token || !admin) {
+    res.status(401).json({ error: 'Not authenticated' });
+    return null;
+  }
+  const { data: userData, error: userErr } = await admin.auth.getUser(token);
+  if (userErr || !userData?.user) {
+    res.status(401).json({ error: 'Invalid session' });
+    return null;
+  }
+  const { data: staffRow } = await admin
+    .from('admin_users')
+    .select('id, role, is_active')
+    .eq('auth_user_id', userData.user.id)
+    .maybeSingle();
+  if (!staffRow || !staffRow.is_active) {
+    res.status(403).json({ error: 'Staff access required' });
+    return null;
+  }
+  return { id: staffRow.id, role: staffRow.role };
+}
+
 // NOTE ON RATE LIMITING: server.ts's Express version of these routes used
 // express-rate-limit, which keeps its counters in process memory. Vercel
 // functions are stateless and short-lived (a fresh instance can spin up
